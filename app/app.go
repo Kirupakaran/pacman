@@ -1,11 +1,14 @@
 package app
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/Jeffail/gabs/v2"
 )
@@ -16,9 +19,9 @@ type PackageDependencies struct {
 }
 
 type Package struct {
-	name     string
-	versions map[string][]string
-	isDev    bool
+	Name     string
+	Versions map[string][]string
+	IsDev    bool
 }
 
 func IsValidDir(dir string) bool {
@@ -52,10 +55,10 @@ func Parse(dir string) {
 		}
 	}
 
-	ExtractPackages(repoPkgs)
+	extractPackages(repoPkgs)
 }
 
-func ExtractPackages(repoPkgs map[string]PackageDependencies) {
+func extractPackages(repoPkgs map[string]PackageDependencies) {
 	allPkgs := make(map[string]Package)
 
 	for repo, pkgs := range repoPkgs {
@@ -65,58 +68,127 @@ func ExtractPackages(repoPkgs map[string]PackageDependencies) {
 		allPkgs = transform(allPkgs, repo, pkgs.Dependencies, false)
 		allPkgs = transform(allPkgs, repo, pkgs.DevDependencies, true)
 	}
-
-	Prepare(allPkgs)
+	writeEncodedMapToFile(allPkgs)
+	writePackagesWRepoToFile(allPkgs)
+	writeBasePackageJsonToFile(allPkgs)
 }
 
-func Prepare(packages map[string]Package) {
-	packument := gabs.New()
+func writeEncodedMapToFile(packages map[string]Package) {
+	b := new(bytes.Buffer)
+	e := gob.NewEncoder(b)
+
+	encodeErr := e.Encode(packages)
+	if encodeErr != nil {
+		log.Fatal("Failed to encode map to binary", encodeErr)
+	}
+	ioErr := os.WriteFile("packages.gob", b.Bytes(), 0666)
+	if ioErr != nil {
+		log.Fatal("Failed to write file", ioErr)
+	}
+}
+
+func writePackagesWRepoToFile(packages map[string]Package) {
+	pkgJson := gabs.New()
+	pkgJson.Array("dependencies")
+	pkgJson.Array("devDependencies")
+	for _, pkg := range packages {
+		jsonObj := gabs.New()
+		for version, repos := range pkg.Versions {
+			jsonObj.Set(repos, pkg.Name, version)
+		}
+		if pkg.IsDev {
+			pkgJson.ArrayAppend(jsonObj, "devDependencies")
+		} else {
+			pkgJson.ArrayAppend(jsonObj, "dependencies")
+		}
+	}
+
+	err := os.WriteFile("packages_list.json", pkgJson.Bytes(), 0666)
+	if err != nil {
+		log.Fatal("Failed to create packages_list.json")
+	}
+}
+
+func writeBasePackageJsonToFile(packages map[string]Package) {
+	pkgJson := gabs.New()
 	aliasRegexp := regexp.MustCompile(`[.~^]`)
 	for _, pkg := range packages {
 		var outerKey string
 
-		if pkg.isDev {
+		if pkg.IsDev {
 			outerKey = "devDependencies"
 		} else {
 			outerKey = "dependencies"
 		}
 
-		for version := range pkg.versions {
-			if len(pkg.versions) == 1 {
-				packument.Set(version, outerKey, pkg.name)
+		for version := range pkg.Versions {
+			if len(pkg.Versions) == 1 {
+				pkgJson.Set(version, outerKey, pkg.Name)
 			} else {
-				alias := pkg.name + aliasRegexp.ReplaceAllString(version, "")
-				packument.Set("npm:"+pkg.name+"@"+version, outerKey, alias)
+				alias := pkg.Name + ":" + aliasRegexp.ReplaceAllString(version, "")
+				pkgJson.Set("npm:"+pkg.Name+"@"+version, outerKey, alias)
 			}
 		}
 	}
 
-	fmt.Println(packument)
+	err := os.WriteFile("package.json", pkgJson.Bytes(), 0666)
+	if err != nil {
+		log.Fatal("Failed to create package.json")
+	}
 }
 
 func transform(packages map[string]Package, repo string, dependencies map[string]string, isDev bool) map[string]Package {
 	for pkg, version := range dependencies {
 		if existingPkg, exists := packages[pkg]; exists {
 			// package already exists in common deps
-			if _, exists := existingPkg.versions[version]; exists {
+			if _, exists := existingPkg.Versions[version]; exists {
 				// package and exact version exists; add repo to version list
-				existingPkg.versions[version] = append(existingPkg.versions[version], repo)
+				existingPkg.Versions[version] = append(existingPkg.Versions[version], repo)
 			} else {
 				// package exists but not the version; add new version info
-				existingPkg.versions[version] = []string{repo}
+				existingPkg.Versions[version] = []string{repo}
 			}
 		} else {
 			// add a new common dependency
 			newPkg := new(Package)
-			newPkg.name = pkg
-			newPkg.versions = make(map[string][]string)
-			newPkg.versions[version] = []string{repo}
+			newPkg.Name = pkg
+			newPkg.Versions = make(map[string][]string)
+			newPkg.Versions[version] = []string{repo}
 			if isDev {
-				newPkg.isDev = true
+				newPkg.IsDev = true
 			}
 			packages[pkg] = *newPkg
 		}
 	}
 
 	return packages
+}
+
+func Unify() {
+	file, err := os.Stat("package.json")
+	if err == nil && file != nil {
+		os.Rename("package.json", "package.json"+"_"+time.Now().Format("20060102150405"))
+	}
+
+	packages := readEncodedMapFromFile()
+
+	fmt.Println(packages)
+}
+
+func readEncodedMapFromFile() map[string]Package {
+	data, ioErr := os.ReadFile("packages.gob")
+	if os.IsNotExist(ioErr) {
+		log.Fatal("packages.gob file missing. Run parse to create it")
+	}
+
+	var decodedMap map[string]Package
+	r := bytes.NewReader(data)
+	d := gob.NewDecoder(r)
+
+	decodeErr := d.Decode(&decodedMap)
+	if decodeErr != nil {
+		log.Fatal("Failed to decode packages.gob", decodeErr)
+	}
+
+	return decodedMap
 }
