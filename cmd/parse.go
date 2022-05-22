@@ -5,7 +5,6 @@ Copyright © 2022 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/kirupakaran/pacman/app"
@@ -23,16 +22,26 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 1 {
-			return errors.New("requires a directory as an argument")
+		if cmd.Flag("dir").Changed {
+			if app.IsValidDir(cmd.Flag("dirPath").Value.String()) {
+				return nil
+			}
+			return fmt.Errorf("invalid directory: %s", args[0])
+		} else if cmd.Flag("repos").Changed {
+			if app.IsValidFile(cmd.Flag("repoList").Value.String()) {
+				return nil
+			}
+			return fmt.Errorf("invalid file: %s", args[0])
+		} else {
+			return fmt.Errorf("either repo list or directory path required")
 		}
-		if app.IsValidDir(args[0]) {
-			return nil
-		}
-		return fmt.Errorf("invalid directory: %s", args[0])
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		app.Parse(args[0])
+		if cmd.Flag("dir").Changed {
+			app.Parse(cmd.Flag("dirPath").Value.String())
+		} else if cmd.Flag("repos").Changed {
+			app.ParseByRepo(cmd.Flag("repoList").Value.String())
+		}
 	},
 }
 
@@ -47,5 +56,13 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// parseCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	parseCmd.Flags().BoolP("repos", "r", false, "If you want to pass a list of repos; must set GITHUB_PAT env")
+	parseCmd.Flags().StringP("repoList", "", "repoList", "Pass a file containing list of repos")
+
+	parseCmd.Flags().BoolP("dir", "d", false, "If you want to pass a directory")
+	parseCmd.Flags().StringP("dirPath", "", "", "Pass a directory containing multiple sub-directories of node repos")
+
+	parseCmd.MarkFlagsRequiredTogether("repos", "repoList")
+	parseCmd.MarkFlagsRequiredTogether("dir", "dirPath")
+	parseCmd.MarkFlagsMutuallyExclusive("repos", "dir")
 }

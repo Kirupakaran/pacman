@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"encoding/json"
 	"log"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/Jeffail/gabs/v2"
 	"github.com/Masterminds/semver/v3"
+	"github.com/google/go-github/v44/github"
+	"golang.org/x/oauth2"
 )
 
 type PackageDependencies struct {
@@ -332,4 +335,59 @@ func parseJsonUsingGabs(dir string) *gabs.Container {
 
 func writeToFile(jsonObj *gabs.Container, dir string) {
 	os.WriteFile(dir+"/package.json_test", jsonObj.Bytes(), 0666)
+}
+
+func IsValidFile(repoListPath string) bool {
+	_, err := os.Stat(repoListPath)
+	if os.IsNotExist(err) {
+		return false
+	}
+
+	return true
+}
+
+func ParseByRepo(repoListPath string) {
+	f, err := os.ReadFile(repoListPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	repos := strings.Fields(string(f))
+	getPackageJsonFilesFromGithub(repos)
+}
+
+func getPackageJsonFilesFromGithub(repos []string) {
+	ctx := context.Background()
+	client := authToGithub()
+	repoPkgs := make(map[string]PackageDependencies)
+
+	for _, repo := range repos {
+		repoOwner := strings.Split(repo, "/")[0]
+		repoName := strings.Split(repo, "/")[1]
+		fileContents, _, _, err := client.Repositories.GetContents(ctx, repoOwner, repoName, "package.json", nil)
+		if err != nil {
+			log.Printf("Repositories.GetContents returned error: %v\n", err)
+		} else {
+			fileString, _ := fileContents.GetContent()
+			var pkgDeps PackageDependencies
+
+			if err == nil {
+				err := json.Unmarshal([]byte(fileString), &pkgDeps)
+				if err != nil {
+					log.Println("error parsing package.json for :", repo, err)
+				}
+				repoPkgs[repo] = pkgDeps
+			}
+		}
+	}
+	extractPackages(repoPkgs)
+}
+
+func authToGithub() *github.Client {
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: os.Getenv("GITHUB_PAT")},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+
+	return github.NewClient(tc)
 }
