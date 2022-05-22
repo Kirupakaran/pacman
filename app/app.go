@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Jeffail/gabs/v2"
@@ -255,36 +256,48 @@ func Update(dir string) {
 	backupFiles()
 	packages := readEncodedMapFromFile()
 	pkgDeps := unmarshallPackageJson(dir)
+	repoName := extractRepoNameFromDir(dir)
 
-	for pkg, version := range dependencies {
+	jsonObj := parseJsonUsingGabs(dir)
+
+	for pkg, version := range pkgDeps.Dependencies {
 		// remove version modifiers
 		digitRegexp := regexp.MustCompile(`^[0-9]+$`)
 		if !digitRegexp.MatchString(version[0:1]) {
 			version = version[1:]
 		}
-		if existingPkg, exists := packages[pkg]; exists {
-			// package already exists in common deps
-			if _, exists := existingPkg.Versions[version]; exists {
-				// package and exact version exists; add repo to version list
-				existingPkg.Versions[version] = append(existingPkg.Versions[version], repo)
-			} else {
-				// package exists but not the version; add new version info
-				existingPkg.Versions[version] = []string{repo}
+
+		if pkg, exists := packages[pkg]; exists {
+			for v, repos := range pkg.Versions {
+				for _, r := range repos {
+					if r == repoName {
+						jsonObj.Set("^"+v, "dependencies", pkg.Name)
+					}
+				}
 			}
-		} else {
-			// add a new common dependency
-			newPkg := new(Package)
-			newPkg.Name = pkg
-			newPkg.Versions = make(map[string][]string)
-			newPkg.Versions[version] = []string{repo}
-			if isDev {
-				newPkg.IsDev = true
-			}
-			packages[pkg] = *newPkg
 		}
 	}
 
-	return packages
+	for pkg, version := range pkgDeps.DevDependencies {
+		// remove version modifiers
+		digitRegexp := regexp.MustCompile(`^[0-9]+$`)
+		if !digitRegexp.MatchString(version[0:1]) {
+			version = version[1:]
+		}
+
+		if pkg, exists := packages[pkg]; exists {
+			for v, repos := range pkg.Versions {
+				for _, r := range repos {
+					if r == repoName {
+						log.Println("Updating dependency ", pkg.Name, v, version)
+						jsonObj.Set("^"+v, "devDependencies", pkg.Name)
+					}
+				}
+			}
+		}
+	}
+
+	writeToFile(jsonObj, dir)
 }
 
 func unmarshallPackageJson(dir string) PackageDependencies {
@@ -294,9 +307,29 @@ func unmarshallPackageJson(dir string) PackageDependencies {
 	if err == nil {
 		err := json.Unmarshal(data, &pkgDeps)
 		if err != nil {
-			log.Println("error parsing package.json for :", subdir, err)
+			log.Println("error parsing package.json for :", dir, err)
 		}
 	}
 
 	return pkgDeps
+}
+
+func extractRepoNameFromDir(dir string) string {
+	p := strings.Split(dir, "/")
+	return p[len(p)-1]
+}
+
+func parseJsonUsingGabs(dir string) *gabs.Container {
+	data, _ := os.ReadFile(dir + "/package.json")
+	jsonParsed, err := gabs.ParseJSON(data)
+
+	if err != nil {
+		log.Println("error parsing package.json for :", dir, err)
+	}
+
+	return jsonParsed
+}
+
+func writeToFile(jsonObj *gabs.Container, dir string) {
+	os.WriteFile(dir+"/package.json_test", jsonObj.Bytes(), 0666)
 }

@@ -32,7 +32,7 @@ to quickly create a Cobra application.`,
 		return fmt.Errorf("invalid directory: %s", args[0])
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("update called")
+		app.Update(args[0])
 	},
 }
 
