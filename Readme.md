@@ -5,8 +5,21 @@ Manage your node microservices dependencies easily.
 
 ## Commands
 
-*pacman parse <dir>*
-Given a directory path where sub-directories are multiple node repos,  this command will parse package.json from all the repos and create a unified package.json in the root level with list of all dependencies and dev dependencies.
+*pacman parse OPTIONS*
+where options are either
+```
+--repo --repoList <file containing a list of repos>
+For example,
+npm/user-acl-two
+npm/dumbledore
+npm/wubwub
+
+or
+
+--dir --dirPath <dir path where sub-directories are multiple node repos>
+```
+
+This command will parse package.json from all the repos and create a unified package.json in the root level with list of all dependencies and dev dependencies.
 
 An example directory structure:
 ```
@@ -41,3 +54,4 @@ will be unified to
 ```
 
 *pacman update <repo path>*
+Update package.json in a repository directory. Parse command needs to be run first.
