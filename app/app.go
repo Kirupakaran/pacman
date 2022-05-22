@@ -250,3 +250,53 @@ func backupFiles() {
 		os.Rename("packages_list.json", "packages_list.json"+"_"+time.Now().Format("20060102150405"))
 	}
 }
+
+func Update(dir string) {
+	backupFiles()
+	packages := readEncodedMapFromFile()
+	pkgDeps := unmarshallPackageJson(dir)
+
+	for pkg, version := range dependencies {
+		// remove version modifiers
+		digitRegexp := regexp.MustCompile(`^[0-9]+$`)
+		if !digitRegexp.MatchString(version[0:1]) {
+			version = version[1:]
+		}
+		if existingPkg, exists := packages[pkg]; exists {
+			// package already exists in common deps
+			if _, exists := existingPkg.Versions[version]; exists {
+				// package and exact version exists; add repo to version list
+				existingPkg.Versions[version] = append(existingPkg.Versions[version], repo)
+			} else {
+				// package exists but not the version; add new version info
+				existingPkg.Versions[version] = []string{repo}
+			}
+		} else {
+			// add a new common dependency
+			newPkg := new(Package)
+			newPkg.Name = pkg
+			newPkg.Versions = make(map[string][]string)
+			newPkg.Versions[version] = []string{repo}
+			if isDev {
+				newPkg.IsDev = true
+			}
+			packages[pkg] = *newPkg
+		}
+	}
+
+	return packages
+}
+
+func unmarshallPackageJson(dir string) PackageDependencies {
+	data, err := os.ReadFile(dir + "/package.json")
+	var pkgDeps PackageDependencies
+
+	if err == nil {
+		err := json.Unmarshal(data, &pkgDeps)
+		if err != nil {
+			log.Println("error parsing package.json for :", subdir, err)
+		}
+	}
+
+	return pkgDeps
+}
