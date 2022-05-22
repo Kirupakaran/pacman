@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"time"
 
 	"github.com/Jeffail/gabs/v2"
+	"github.com/Masterminds/semver/v3"
 )
 
 type PackageDependencies struct {
@@ -139,6 +140,11 @@ func writeBasePackageJsonToFile(packages map[string]Package) {
 
 func transform(packages map[string]Package, repo string, dependencies map[string]string, isDev bool) map[string]Package {
 	for pkg, version := range dependencies {
+		// remove version modifiers
+		digitRegexp := regexp.MustCompile(`^[0-9]+$`)
+		if !digitRegexp.MatchString(version[0:1]) {
+			version = version[1:]
+		}
 		if existingPkg, exists := packages[pkg]; exists {
 			// package already exists in common deps
 			if _, exists := existingPkg.Versions[version]; exists {
@@ -164,7 +170,8 @@ func transform(packages map[string]Package, repo string, dependencies map[string
 	return packages
 }
 
-func Unify() {
+func Unify(isMinor bool) {
+	var modifier string
 	file, err := os.Stat("package.json")
 	if err == nil && file != nil {
 		os.Rename("package.json", "package.json"+"_"+time.Now().Format("20060102150405"))
@@ -172,7 +179,47 @@ func Unify() {
 
 	packages := readEncodedMapFromFile()
 
-	fmt.Println(packages)
+	if isMinor {
+		modifier = "^"
+	} else {
+		modifier = "~"
+	}
+
+	for _, pkg := range packages {
+		if len(pkg.Versions) == 1 {
+			continue
+		}
+
+		versions := make([]*semver.Version, 0, len(pkg.Versions))
+		for version := range pkg.Versions {
+			v, err := semver.NewVersion(version)
+			if err != nil {
+				log.Printf("Failed to parse version %s for package %s\n", version, pkg.Name)
+				continue
+			}
+			versions = append(versions, v)
+		}
+
+		sort.Sort(semver.Collection(versions))
+
+		for i := 0; i < len(versions); i++ {
+			c, err := semver.NewConstraint(modifier + versions[i].String())
+			if err != nil {
+				log.Printf("Failed to parse contraint %s\n", versions[i])
+				continue
+			}
+			for j := i + 1; j < len(versions); j++ {
+				if valid, _ := c.Validate(versions[j]); valid {
+					log.Println("Found equivalent version ", versions[j], versions[i])
+					copy(pkg.Versions[versions[j].String()], pkg.Versions[versions[i].String()])
+					delete(pkg.Versions, versions[i].String())
+					i += 1
+				}
+			}
+		}
+	}
+
+	writeBasePackageJsonToFile(packages)
 }
 
 func readEncodedMapFromFile() map[string]Package {
