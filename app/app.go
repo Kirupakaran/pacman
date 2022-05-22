@@ -172,11 +172,8 @@ func transform(packages map[string]Package, repo string, dependencies map[string
 
 func Unify(isMinor bool) {
 	var modifier string
-	file, err := os.Stat("package.json")
-	if err == nil && file != nil {
-		os.Rename("package.json", "package.json"+"_"+time.Now().Format("20060102150405"))
-	}
 
+	backupFiles()
 	packages := readEncodedMapFromFile()
 
 	if isMinor {
@@ -210,7 +207,7 @@ func Unify(isMinor bool) {
 			}
 			for j := i + 1; j < len(versions); j++ {
 				if valid, _ := c.Validate(versions[j]); valid {
-					log.Println("Found equivalent version ", versions[j], versions[i])
+					log.Printf("Found similar version %s to %s for package %s\n", versions[j], versions[i], pkg.Name)
 					copy(pkg.Versions[versions[j].String()], pkg.Versions[versions[i].String()])
 					delete(pkg.Versions, versions[i].String())
 					i += 1
@@ -219,6 +216,8 @@ func Unify(isMinor bool) {
 		}
 	}
 
+	writeEncodedMapToFile(packages)
+	writePackagesWRepoToFile(packages)
 	writeBasePackageJsonToFile(packages)
 }
 
@@ -238,4 +237,16 @@ func readEncodedMapFromFile() map[string]Package {
 	}
 
 	return decodedMap
+}
+
+func backupFiles() {
+	file, err := os.Stat("package.json")
+	if err == nil && file != nil {
+		os.Rename("package.json", "package.json"+"_"+time.Now().Format("20060102150405"))
+	}
+
+	file, err = os.Stat("packages_list.json")
+	if err == nil && file != nil {
+		os.Rename("packages_list.json", "packages_list.json"+"_"+time.Now().Format("20060102150405"))
+	}
 }
